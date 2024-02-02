@@ -1,14 +1,12 @@
 const https = require("node:https");
-let TOKEN = process.env.GH_TOKEN_DOWNLOAD_MICROSERVICE;
+const TOKEN = process.env.GH_TOKEN_DOWNLOAD_MICROSERVICE;
 
 // Environment Variables Check
 
 if (typeof TOKEN === "undefined") {
-  if (process.env.PULSAR_STATUS === "dev") {
-    // We are in dev mode, assign dev values
-    TOKEN = "123456";
-  } else {
-    // We are not in dev mode. Our secrets are gone and the application will fail to work
+  if (process.env.PULSAR_STATUS !== "dev") {
+    // We are not in dev mode. Our auth token is gone, and the application may fail to work
+    // due to rate limiting by GitHub for unauthenticated API requests.
     console.log("Missing Required Environment Variables! Something has gone wrong!");
     process.exit(1);
   }
@@ -26,6 +24,12 @@ function doRequest() {
       'Authorization': `Bearer ${TOKEN}`
     }
   };
+
+  if (process.env.PULSAR_STATUS === "dev") {
+    // We don't expect to be authed in dev mode.
+    // Fetching releases from GitHub without authentication is fine in dev mode.
+    delete options.headers['Authorization'];
+  }
 
   return new Promise((resolve, reject) => {
     let data = '';
@@ -49,50 +53,33 @@ function doRequest() {
   });
 };
 
-function query_os(req) {
-  let raw = req; // The URL string containing any number of query params.
-  let prov = undefined;
-
-  if (typeof raw !== "string") {
+function query_os(providedParams) {
+  if (typeof providedParams !== "string") {
     return false;
   }
 
-  let full = raw.split("&");
+  const valid = [ "linux", "arm_linux", "silicon_mac", "intel_mac", "windows" ];
+  const allParams = providedParams.split("&");
 
-  for (const param of full) {
+  for (const param of allParams) {
     if (param.startsWith("os=")) {
-      prov = param.split("=")[1];
-      break;
+      // Returning a result based on the first "os=" param we encounter.
+      // Users should not provide the same param twice, that would be invalid.
+      const prov = param.split("=")[1];
+      return valid.includes(prov) ? prov : false;
     }
   }
 
-  if (prov === undefined) {
-    return false;
-  }
-
-  let valid = [ "linux", "arm_linux", "silicon_mac", "intel_mac", "windows" ];
-
-  return valid.includes(prov) ? prov : false;
+  // No "os" query param was provided, return false
+  return false;
 }
 
-function query_type(req) {
-  let raw = req;
-  let prov = undefined;
-
-  let full = raw.split("&");
-
-  for (const param of full) {
-    if (param.startsWith("type=")) {
-      prov = param.split("=")[1];
-      break;
-    }
-  }
-
-  if (prov === undefined) {
+function query_type(providedParams) {
+  if (typeof providedParams !== "string") {
     return false;
   }
 
-  let valid = [
+  const valid = [
     "linux_appimage",
     "linux_tar",
     "linux_rpm",
@@ -105,8 +92,19 @@ function query_type(req) {
     "mac_dmg",
     "mac_dmg_blockmap"
   ];
+  const allParams = providedParams.split("&");
 
-  return valid.includes(prov) ? prov : false;
+  for (const param of allParams) {
+    if (param.startsWith("type=")) {
+      // Returning a result based on the first "type=" param we encounter.
+      // Users should not provide the same param twice, that would be invalid.
+      const prov = param.split("=")[1];
+      return valid.includes(prov) ? prov : false;
+    }
+  }
+
+  // No "type" query param was provided, return false
+  return false;
 }
 
 async function displayError(req, res, errMsg) {
